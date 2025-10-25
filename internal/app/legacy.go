@@ -12,9 +12,10 @@ var (
 
 const (
 	LegacyPacket_SmallServerInfo    = uint16(50)
+	LegacyPacket_BigServerInfo      = uint16(51)
 	LegacyPacket_GetSmallServerInfo = uint16(52)
 	LegacyPacket_GetBigServerInfo   = uint16(53)
-	LegacyPacket_BigServerInfo      = uint16(51)
+	LegacyPacket_Logout             = uint16(7)
 )
 
 type LegacyMessage struct {
@@ -29,9 +30,9 @@ func RawDataToLegacyMessage(data []byte) (*LegacyMessage, error) {
 		return nil, fmt.Errorf("%v: legacy message too short", ErrorInvalidLegacyMessage)
 	}
 
-	descID := uint16(binary.BigEndian.Uint16([]byte{data[0], data[1]}))
-	msgID := uint16(binary.BigEndian.Uint16([]byte{data[2], data[3]}))
-	dataLen := uint16(binary.BigEndian.Uint16([]byte{data[4], data[5]}))
+	descID := binary.BigEndian.Uint16([]byte{data[0], data[1]})
+	msgID := binary.BigEndian.Uint16([]byte{data[2], data[3]})
+	dataLen := binary.BigEndian.Uint16([]byte{data[4], data[5]})
 
 	return &LegacyMessage{
 		DescriptorID: descID,
@@ -41,24 +42,6 @@ func RawDataToLegacyMessage(data []byte) (*LegacyMessage, error) {
 	}, nil
 }
 
-/*
-1. SmallServerInfoBase (nested message):
-
-  - port (int32): Written as 2 unsigned shorts
-
-  - First short: low 16 bits (port & 0xFFFF)
-
-  - Second short: high 16 bits ((port - low) >> 16) as signed short
-
-  - hostname (string): Written as:
-
-  - Length (unsigned short): string length + 1 for null terminator
-
-  - Character pairs packed into unsigned shorts (2 chars per short)
-
-    2. transaction (uint32): Written as 2 unsigned shorts (same format as port)
-    Set to 0 for regular servers (non-master)
-*/
 func (s *Server) PacketLegacySmallServerInfo() []byte {
 	packet := make([]byte, 0)
 
@@ -124,9 +107,11 @@ func (s *Server) PacketLegacyBigServerInfo() []byte {
 
 	packet = append(packet, encodeInt32(0)...) // user count
 
-	packet = append(packet, encodeString("0.2.8.3")...) // version
+	// VersionSync structure: min and max protocol versions (both int32)
+	packet = append(packet, encodeInt32(1)...)  // version.min - minimum supported protocol version
+	packet = append(packet, encodeInt32(25)...) // version.max - maximum supported protocol version
 
-	packet = append(packet, encodeString("alpha_go")...) // release
+	packet = append(packet, encodeString("0.2.9.2.3")...) // release version string
 
 	packet = append(packet, encodeInt32(16)...) // max players
 
@@ -138,20 +123,20 @@ func (s *Server) PacketLegacyBigServerInfo() []byte {
 
 	packet = append(packet, encodeString("")...) // user global id's
 
-	// settings flags
-	flagBytes := make([]byte, 2)
-	binary.LittleEndian.PutUint16(flagBytes, 0)
-	packet = append(packet, flagBytes...)
+	// SettingsDigest structure
+	packet = append(packet, encodeInt32(0)...) // settings flags (uint32, not uint16!)
+
+	// Three int32 fields before the REAL fields
+	packet = append(packet, encodeInt32(0)...) // minPlayTimeTotal (int32)
+	packet = append(packet, encodeInt32(0)...) // minPlayTimeOnline (int32)
+	packet = append(packet, encodeInt32(0)...) // minPlayTimeTeam (int32)
 
 	// REAL (float) settings
-	packet = append(packet, encodeReal(0.0)...)   // minPlayTimeTotal
-	packet = append(packet, encodeReal(0.0)...)   // minPlayTimeOnline
-	packet = append(packet, encodeReal(0.0)...)   // minPlayTimeTeam
-	packet = append(packet, encodeReal(0.1)...)   // cycleDelay
-	packet = append(packet, encodeReal(1.0)...)   // acceleration
-	packet = append(packet, encodeReal(0.0)...)   // rubberWallHump
-	packet = append(packet, encodeReal(1.0)...)   // rubberHitWallRatio
-	packet = append(packet, encodeReal(300.0)...) // wallsLength
+	packet = append(packet, encodeReal(0.1)...)  // cycleDelay
+	packet = append(packet, encodeReal(0.5)...)  // acceleration
+	packet = append(packet, encodeReal(0.0)...)  // rubberWallHump
+	packet = append(packet, encodeReal(1.0)...)  // rubberHitWallRatio
+	packet = append(packet, encodeReal(10.0)...) // wallsLength
 
 	return packet
 }

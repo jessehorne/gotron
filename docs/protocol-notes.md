@@ -1116,3 +1116,69 @@ Message Structure
   // (close sockets, remove from active clients list, etc.)
 
   You don't need to send a response - just clean up server state.
+
+---
+
+# Server Info Flow
+
+The Behind-the-Scenes Flow
+
+1. How the Client Got Your Server Name
+
+The client received a SmallServerDescriptor (packet 50) from either:
+- The master server list query
+- A LAN broadcast response
+
+This basic packet contains your server name, address, and port - but no detailed information.
+
+2. What "Polling" Really Means
+
+Your server is marked as "polling" when (nServerInfo.cpp:2307-2310):
+!advancedInfoSetEver && queried <= 3 && TimesNotAnswered() < 4
+
+This means:
+- The client is sending RequestBigServerInfo packets (descriptor 53) to your server
+- Your server has never successfully responded with detailed info (descriptor 51)
+- The client has tried 3 or fewer times so far
+- The "times not answered" counter is below 4
+
+3. What Causes "Unreachable"
+
+After 4+ consecutive failed queries, the server becomes "unreachable" (nServerInfo.cpp:2302-2305):
+TimesNotAnswered() >= sn_TNALostContact  // default threshold = 4
+
+4. The Actual Network Communication Failing
+
+When you see "polling" then "unreachable", this sequence happens (nServerInfo.cpp:1831-1978):
+
+Client → Server: RequestBigServerInfo (descriptor 53)
+Client waits 0.5 seconds...
+Server → Client: [NO RESPONSE] ❌
+
+[timesNotAnswered counter increments]
+
+Client → Server: RequestBigServerInfo (descriptor 53) [retry 2]
+Client waits 0.5 seconds...
+Server → Client: [NO RESPONSE] ❌
+
+[timesNotAnswered counter increments]
+
+...repeats until timesNotAnswered >= 4...
+
+Status changes to: "unreachable"
+
+Root Causes
+
+If clients can see your server name but it's showing as polling/unreachable, the most likely causes are:
+
+1. Firewall blocking UDP packets - The small server info (descriptor 50) gets through from the master server, but direct queries (descriptor 53) to your server are blocked
+2. Port forwarding incomplete - Your server port may not be properly forwarded for incoming UDP queries
+3. Server not responding to descriptor 53 - Your server implementation may not be handling the RequestBigServerInfo message properly
+4. Network timing issues - The 0.5 second timeout is too short for your network conditions
+
+Files Involved
+
+- State logic: src/network/nServerInfo.cpp:2302-2310
+- Query sending: src/network/nServerInfo.cpp:1831-1978
+- Response handling: src/network/nServerInfo.cpp:2904-3053
+- UI rendering: src/tron/gServerBrowser.cpp:633-671
